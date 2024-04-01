@@ -29,11 +29,12 @@ def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, s
     scheduler.step()
     mean_loss = total_loss / len(train_loader)
     if logger is not None:
-        logger.info('train_loss', mean_loss)
+        logger.info('train_loss:', mean_loss)
     return mean_loss 
 
 def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE):
     model.eval()
+    projector.eval()
     total_loss = 0
     with torch.no_grad():
         for batch in val_loader:
@@ -45,17 +46,27 @@ def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=s
             total_loss += loss.item()
     mean_loss = total_loss / len(val_loader)
     if logger is not None:
-        logger.info('val_loss', mean_loss)
+        logger.info('val_loss:', mean_loss)
     return mean_loss
 
-def simCLR_train(model, train_loader, val_loader, projector, augment, optimizer, scheduler, num_epochs, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE):
+def simCLR_train(
+    train_loader, 
+    val_loader, 
+    model, 
+    projector, 
+    optimizer, 
+    scheduler, 
+    augment,  
+    criterion=simCLR_criterion, 
+    num_epochs=100, 
+    logger=None, 
+    device=DETECTED_DEVICE
+):
     for epoch in range(num_epochs):
         train_loss = simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion, logger, device)
         val_loss = simCLR_validate_iteration(model, val_loader, projector, augment, criterion, logger, device)
         if logger is not None:
-            logger.info('epoch', epoch)
-            logger.info('train_loss', train_loss)
-            logger.info('val_loss', val_loss)
+            logger.info(f'epoch: {epoch} train_loss: {train_loss} val_loss: {val_loss}')
     return model
 
 if __name__ == '__main__':
