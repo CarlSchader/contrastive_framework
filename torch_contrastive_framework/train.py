@@ -1,6 +1,19 @@
 import torch
+import torch.nn as nn
+import torchvision
+import torchvision.models as models
+import torchvision.transforms as transforms
+import torch.optim as optim
+from ignite.handlers import create_lr_scheduler_with_warmup
 
 DETECTED_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
+
+def get_color_distortion(s=1.0):
+    color_jitter = transforms.ColorJitter(0.8*s, 0.8*s, 0.8*s, 0.2*s)
+    rnd_color_jitter = transforms.RandomApply([color_jitter], p=0.8)
+    rnd_gray = transforms.RandomGrayscale(p=0.2)
+    color_distort = transforms.Compose([rnd_color_jitter, rnd_gray])
+    return color_distort
 
 def simCLR_criterion(batch1, batch2, temp=0.1):
     batch_size = batch1.size(0)
@@ -16,7 +29,8 @@ def simCLR_criterion(batch1, batch2, temp=0.1):
 def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE):
     model.train()
     total_loss = 0
-    for batch in train_loader:
+    batches = len(train_loader)
+    for batch_idx, (batch, _) in enumerate(train_loader):
         optimizer.zero_grad()
         batch = batch.to(device)
         batch1, batch2 = augment(batch), augment(batch)
@@ -25,11 +39,14 @@ def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, s
         loss = criterion(z1, z2)
         loss.backward()
         optimizer.step()
-        total_loss += loss.item()
+        batch_loss = loss.item()
+        total_loss += batch_loss
+        if logger is not None:
+            logger.info(f'batch: {batch_idx}/{batches} batch_loss: {batch_loss}')
     scheduler.step()
-    mean_loss = total_loss / len(train_loader)
+    mean_loss = total_loss / batches
     if logger is not None:
-        logger.info('train_loss:', mean_loss)
+        logger.info(f'train_loss: {mean_loss}')
     return mean_loss 
 
 def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE):
@@ -37,7 +54,7 @@ def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=s
     projector.eval()
     total_loss = 0
     with torch.no_grad():
-        for batch in val_loader:
+        for _, (batch, _) in enumerate(val_loader):
             batch = batch.to(device)
             batch1, batch2 = augment(batch), augment(batch)
             h1, h2 = model(batch1), model(batch2)
@@ -46,49 +63,67 @@ def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=s
             total_loss += loss.item()
     mean_loss = total_loss / len(val_loader)
     if logger is not None:
-        logger.info('val_loss:', mean_loss)
+        logger.info(f'val_loss: {mean_loss}')
     return mean_loss
 
 def simCLR_train(
     train_loader, 
-    val_loader, 
-    model, 
-    projector, 
-    optimizer, 
-    scheduler, 
-    augment,  
+    val_loader=None,
+    model=models.resnet50(),
+    projector=nn.Sequential(nn.Linear(1000, 128), nn.ReLU(), nn.Linear(128, 128)),
+    optimizer=None, 
+    scheduler=None,
+    augment=transforms.Compose([
+        transforms.RandomResizedCrop(224),
+        transforms.RandomHorizontalFlip(),
+        get_color_distortion(),
+        transforms.GaussianBlur(kernel_size=3),
+    ]),
     criterion=simCLR_criterion, 
-    num_epochs=100, 
+    num_epochs=100,
     logger=None, 
     device=DETECTED_DEVICE
 ):
+    model = model.to(device)
+    projector = projector.to(device)
+    if optimizer is None:
+        optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.075, weight_decay=1e-6)
+    if scheduler is None:
+        scheduler = optim.lr_scheduler.SequentialLR(optimizer, [
+            optim.lr_scheduler.LinearLR(optimizer, start_lr=0.0, end_lr=0.075, num_epochs=10),
+            optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=0.0)
+        ]
+
+        scheduler = create_lr_scheduler_with_warmup(
+            , 
+            warmup_start_value=0.0, 
+            warmup_duration=10
+        )
+
     for epoch in range(num_epochs):
         train_loss = simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion, logger, device)
-        val_loss = simCLR_validate_iteration(model, val_loader, projector, augment, criterion, logger, device)
+        if val_loader is not None:
+            val_loss = simCLR_validate_iteration(model, val_loader, projector, augment, criterion, logger, device)
+        else:
+            val_loss = 'N/A'
         if logger is not None:
             logger.info(f'epoch: {epoch} train_loss: {train_loss} val_loss: {val_loss}')
-    return model
+    return model, projector
 
 if __name__ == '__main__':
-    import time
-    start = time.time()
-    batch_size = 12500
-    temp = 0.1
+    import time, logging
+    model = models.mobilenet_v3_small()
+    dataset = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    dataloader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True)
     
-    b1 = torch.stack([torch.arange(start=(i*batch_size)+1, end=((i+1)*batch_size)+1) for i in range(batch_size)])
-    b2 = (0.5 * b1) + 3
-    b1 = b1.to('cuda')
-    b2 = b2.to('cuda')
+    logging.basicConfig(level=logging.INFO)
 
-    print(simCLR_criterion(b1, b2, temp))
-    # print(simCLR_criterion(torch.tensor([
-    #     [1.0, 0.0, 1.0],
-    #     [-0.5, 0.866, 0.0],
-    #     [-0.5, -0.866, 0.0],
-    # ]), torch.tensor([
-    #     [1.0, 0.0, 0.0],
-    #     [-0.5, 0.866, 0.0],
-    #     [-0.5, -0.866, 0.0],
-    # ]), temp))
+    start = time.time()
+   
+    model, projector = simCLR_train(dataloader, model=model, logger=logging.getLogger(), num_epochs=1)
+
+    torch.save(model.state_dict(), 'model.pth')
+    torch.save(projector.state_dict(), 'projector.pth')
 
     print('Time:', (time.time() - start)*1000)
+
