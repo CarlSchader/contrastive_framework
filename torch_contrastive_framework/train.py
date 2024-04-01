@@ -105,19 +105,19 @@ def simCLR_train(
 if __name__ == '__main__':
     import time, logging, torchvision
     model = models.mobilenet_v3_small()
-    dataset = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    dataset = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
     dataloader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True)
     
     logging.basicConfig(
         filename='train.log',
-        filemode='a',
         format='',
+        filemode='w',
         level=logging.INFO
     )
 
     start = time.time()
    
-    model, projector = simCLR_train(dataloader, model=model, logger=logging.getLogger(), num_epochs=1)
+    model, projector = simCLR_train(dataloader, model=model, logger=logging.getLogger())
 
     torch.save(model.state_dict(), 'model.pth')
     torch.save(projector.state_dict(), 'projector.pth')
