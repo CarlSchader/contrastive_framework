@@ -40,23 +40,25 @@ def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, s
         batch_loss = loss.item()
         total_loss += batch_loss
         if logger is not None:
-            logger.debug(f'batch: {batch_idx}/{batches} batch_loss: {batch_loss}')
+            logger.debug(f'batch: {batch_idx+1}/{batches} batch_loss: {batch_loss}')
     scheduler.step()
     mean_loss = total_loss / batches
-    return mean_loss 
+    return mean_loss
 
 def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE):
     model.eval()
     projector.eval()
     total_loss = 0
     with torch.no_grad():
-        for _, (batch, _) in enumerate(val_loader):
+        for batch_idx, (batch, _) in enumerate(val_loader):
             batch = batch.to(device)
             batch1, batch2 = augment(batch), augment(batch)
             h1, h2 = model(batch1), model(batch2)
             z1, z2 = projector(h1), projector(h2)
             loss = criterion(z1, z2)
             total_loss += loss.item()
+            if logger is not None:
+                logger.debug(f'val_batch: {batch_idx+1}/{len(val_loader)} val_batch_loss: {loss.item()}')
     mean_loss = total_loss / len(val_loader)
     return mean_loss
 
@@ -78,16 +80,18 @@ def simCLR_train(
     logger=None, 
     device=DETECTED_DEVICE
 ):
-    logger.info('Starting training')
+    logger.debug('Starting training')
     model = model.to(device)
     projector = projector.to(device)
     if optimizer is None:
-        optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.075, weight_decay=1e-6)
+        optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.001, weight_decay=0.01)
     if scheduler is None:
         scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[
-            optim.lr_scheduler.LinearLR(optimizer, start_factor=0.1, end_factor=1.0, total_iters=10),
+            optim.lr_scheduler.LinearLR(optimizer, start_factor=0.33, end_factor=1.0, total_iters=10),
             optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=0.0)
         ], milestones=[10])
+    
+    logger.info('epoch,train_loss,val_loss,lr...')
 
     for epoch in range(num_epochs):
         train_loss = simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion, logger, device)
@@ -96,31 +100,39 @@ def simCLR_train(
         else:
             val_loss = 'N/A'
         if logger is not None:
-            logger.info(f'epoch: {epoch} train_loss: {train_loss} val_loss: {val_loss}')
+            lr_string = ','.join(map(str, scheduler.get_last_lr()))
+            logger.info(f'{epoch+1},{train_loss},{val_loss},{lr_string}')
 
-    logger.info('Training complete')
+    logger.debug('Training complete')
 
     return model, projector
 
 if __name__ == '__main__':
-    import time, logging, torchvision
-    model = models.mobilenet_v3_small()
-    dataset = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
-    dataloader = torch.utils.data.DataLoader(dataset, batch_size=128, shuffle=True)
+    import logging, torchvision, sys
     
-    logging.basicConfig(
-        filename='train.log',
-        format='',
-        filemode='w',
-        level=logging.INFO
-    )
+    model = models.mobilenet_v3_small()
+    
+    train_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=512, shuffle=True)
 
-    start = time.time()
-   
-    model, projector = simCLR_train(dataloader, model=model, logger=logging.getLogger())
+    val_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    val_loader = torch.utils.data.DataLoader(val_set, batch_size=512, shuffle=True)
+
+    root_logger = logging.getLogger()
+    loging_formatter = logging.Formatter('')
+    root_logger.setLevel(logging.DEBUG)
+    file_handler = logging.FileHandler('train.log', mode='w')
+    file_handler.setFormatter(loging_formatter)
+    file_handler.setLevel(logging.INFO)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(loging_formatter)
+    console_handler.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+    
+    model, projector = simCLR_train(train_loader, val_loader=val_loader, model=model, logger=root_logger)
 
     torch.save(model.state_dict(), 'model.pth')
     torch.save(projector.state_dict(), 'projector.pth')
 
-    print('Time:', (time.time() - start)*1000)
 
