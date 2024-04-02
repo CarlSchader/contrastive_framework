@@ -24,7 +24,7 @@ def simCLR_criterion(batch1, batch2, temp=0.1):
     return -torch.log(x / (sums-x)).mean()
 
     
-def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE):
+def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE, gradient_clip=None):
     model.train()
     total_loss = 0
     batches = len(train_loader)
@@ -36,6 +36,11 @@ def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, s
         z1, z2 = projector(h1), projector(h2)
         loss = criterion(z1, z2)
         loss.backward()
+
+        if gradient_clip is not None and gradient_clip > 0.0:
+            torch.nn.utils.clip_grad_norm_(model.parameters(), gradient_clip)
+            torch.nn.utils.clip_grad_norm_(projector.parameters(), gradient_clip)
+
         optimizer.step()
         batch_loss = loss.item()
         total_loss += batch_loss
@@ -78,13 +83,15 @@ def simCLR_train(
     criterion=simCLR_criterion, 
     num_epochs=100,
     logger=None, 
-    device=DETECTED_DEVICE
+    device=DETECTED_DEVICE,
+    gradient_clip=1.0, # can be None or 0.0 to disable gradient clipping
+    epoch_complete_hook=lambda epoch, train_loss, val_loss, model, projector, optimizer, scheduler: None
 ):
     logger.debug('Starting training')
     model = model.to(device)
     projector = projector.to(device)
     if optimizer is None:
-        optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.001, weight_decay=0.01)
+        optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.001, weight_decay=0.1)
     if scheduler is None:
         scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[
             optim.lr_scheduler.LinearLR(optimizer, start_factor=0.33, end_factor=1.0, total_iters=5),
@@ -94,7 +101,7 @@ def simCLR_train(
     logger.info('epoch,train_loss,val_loss,lr...')
 
     for epoch in range(num_epochs):
-        train_loss = simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion, logger, device)
+        train_loss = simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion, logger, device, gradient_clip=gradient_clip)
         if val_loader is not None:
             val_loss = simCLR_validate_iteration(model, val_loader, projector, augment, criterion, logger, device)
         else:
@@ -103,12 +110,15 @@ def simCLR_train(
             lr_string = ','.join(map(str, scheduler.get_last_lr()))
             logger.info(f'{epoch+1},{train_loss},{val_loss},{lr_string}')
 
+        if epoch_complete_hook is not None:
+            epoch_complete_hook(epoch, train_loss, val_loss, model, projector, optimizer, scheduler)
+
     logger.debug('Training complete')
 
     return model, projector
 
 if __name__ == '__main__':
-    import logging, torchvision, sys
+    import logging, torchvision, os, sys, datetime
     
     model = models.mobilenet_v3_small()
     
@@ -129,8 +139,31 @@ if __name__ == '__main__':
     console_handler.setLevel(logging.DEBUG)
     root_logger.addHandler(file_handler)
     root_logger.addHandler(console_handler)
+
+    save_dir = os.path.join('weights', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    os.makedirs(save_dir, exist_ok=True)
+
+    best_val_loss = float('inf')
+    def checkpoint_hook(epoch, train_loss, val_loss, hook_model, hook_projector, hook_optimizer, hook_scheduler):
+        global best_val_loss
+        print(best_val_loss)
+        save_dict = {
+            'model': hook_model.state_dict(), 
+            'projector': hook_projector.state_dict(), 
+            'optimizer': hook_optimizer.state_dict(), 
+            'scheduler': hook_scheduler.state_dict(),
+            'epoch': epoch,
+            'train_loss': train_loss,
+            'val_loss': val_loss,
+        }
+        torch.save(save_dict, os.path.join(save_dir, f'latest.pth'))
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(save_dict, os.path.join(save_dir, 'best.pth'))
+        if (epoch+1) % 10 == 0:
+            torch.save(save_dict, os.path.join(save_dir, f'{epoch}.pth'))
     
-    model, projector = simCLR_train(train_loader, val_loader=val_loader, model=model, logger=root_logger)
+    model, projector = simCLR_train(train_loader, val_loader=val_loader, model=model, logger=root_logger, epoch_complete_hook=checkpoint_hook)
 
     torch.save(model.state_dict(), 'model.pth')
     torch.save(projector.state_dict(), 'projector.pth')
