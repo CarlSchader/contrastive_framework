@@ -99,19 +99,19 @@ def simCLR_train(
         ], milestones=[5])
     
     logger.info('epoch,train_loss,val_loss,lr...')
+    with torch.autograd.detect_anomaly():
+        for epoch in range(num_epochs):
+            train_loss = simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion, logger, device, gradient_clip=gradient_clip)
+            if val_loader is not None:
+                val_loss = simCLR_validate_iteration(model, val_loader, projector, augment, criterion, logger, device)
+            else:
+                val_loss = 'N/A'
+            if logger is not None:
+                lr_string = ','.join(map(str, scheduler.get_last_lr()))
+                logger.info(f'{epoch+1},{train_loss},{val_loss},{lr_string}')
 
-    for epoch in range(num_epochs):
-        train_loss = simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion, logger, device, gradient_clip=gradient_clip)
-        if val_loader is not None:
-            val_loss = simCLR_validate_iteration(model, val_loader, projector, augment, criterion, logger, device)
-        else:
-            val_loss = 'N/A'
-        if logger is not None:
-            lr_string = ','.join(map(str, scheduler.get_last_lr()))
-            logger.info(f'{epoch+1},{train_loss},{val_loss},{lr_string}')
-
-        if epoch_complete_hook is not None:
-            epoch_complete_hook(epoch, train_loss, val_loss, model, projector, optimizer, scheduler)
+            if epoch_complete_hook is not None:
+                epoch_complete_hook(epoch, train_loss, val_loss, model, projector, optimizer, scheduler)
 
     logger.debug('Training complete')
 
@@ -122,16 +122,17 @@ if __name__ == '__main__':
     
     model = models.mobilenet_v3_small()
     
-    train_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    train_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/test", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=512, shuffle=True)
 
     val_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
     val_loader = torch.utils.data.DataLoader(val_set, batch_size=512, shuffle=True)
 
+    logging_file = 'train.log'
     root_logger = logging.getLogger()
     loging_formatter = logging.Formatter('')
     root_logger.setLevel(logging.DEBUG)
-    file_handler = logging.FileHandler('train.log', mode='w')
+    file_handler = logging.FileHandler(logging_file, mode='w')
     file_handler.setFormatter(loging_formatter)
     file_handler.setLevel(logging.INFO)
     console_handler = logging.StreamHandler(sys.stdout)
@@ -146,15 +147,17 @@ if __name__ == '__main__':
     best_val_loss = float('inf')
     def checkpoint_hook(epoch, train_loss, val_loss, hook_model, hook_projector, hook_optimizer, hook_scheduler):
         global best_val_loss
-        print(best_val_loss)
+
+        with open(logging_file, 'r') as f:
+            log_string = f.read()
+
         save_dict = {
             'model': hook_model.state_dict(), 
             'projector': hook_projector.state_dict(), 
             'optimizer': hook_optimizer.state_dict(), 
             'scheduler': hook_scheduler.state_dict(),
             'epoch': epoch,
-            'train_loss': train_loss,
-            'val_loss': val_loss,
+            'log': log_string 
         }
         torch.save(save_dict, os.path.join(save_dir, f'latest.pth'))
         if val_loss < best_val_loss:
@@ -163,9 +166,7 @@ if __name__ == '__main__':
         if (epoch+1) % 10 == 0:
             torch.save(save_dict, os.path.join(save_dir, f'{epoch}.pth'))
     
-    model, projector = simCLR_train(train_loader, val_loader=val_loader, model=model, logger=root_logger, epoch_complete_hook=checkpoint_hook)
+    simCLR_train(train_loader, val_loader=val_loader, model=model, logger=root_logger, epoch_complete_hook=checkpoint_hook)
 
-    torch.save(model.state_dict(), 'model.pth')
-    torch.save(projector.state_dict(), 'projector.pth')
 
 
