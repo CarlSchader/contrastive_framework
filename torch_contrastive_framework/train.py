@@ -87,9 +87,9 @@ def simCLR_train(
         optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.001, weight_decay=0.01)
     if scheduler is None:
         scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[
-            optim.lr_scheduler.LinearLR(optimizer, start_factor=0.33, end_factor=1.0, total_iters=10),
+            optim.lr_scheduler.LinearLR(optimizer, start_factor=0.33, end_factor=1.0, total_iters=5),
             optim.lr_scheduler.CosineAnnealingLR(optimizer, T_max=num_epochs, eta_min=0.0)
-        ], milestones=[10])
+        ], milestones=[5])
     
     logger.info('epoch,train_loss,val_loss,lr...')
 
