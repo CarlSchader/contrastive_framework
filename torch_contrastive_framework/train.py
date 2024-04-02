@@ -122,7 +122,7 @@ if __name__ == '__main__':
     
     model = models.mobilenet_v3_small()
     
-    train_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/test", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    train_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
     train_loader = torch.utils.data.DataLoader(train_set, batch_size=512, shuffle=True)
 
     val_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
