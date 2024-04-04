@@ -5,7 +5,6 @@ import torchvision.transforms as transforms
 import torch.optim as optim
 
 DETECTED_DEVICE = torch.device('cuda' if torch.cuda.is_available() else 'cpu')
-EPSILON = 1e-6
 
 def get_color_distortion(s=1.0):
     color_jitter = transforms.ColorJitter(0.8*s, 0.8*s, 0.8*s, 0.2*s)
@@ -22,7 +21,7 @@ def simCLR_criterion(batch1, batch2, temp=0.1):
     x = torch.exp(x / temp)
     sums = x.sum(dim=0)
     x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
-    return -torch.log((x / (sums-x)) + EPSILON).mean()
+    return -torch.log((x / (sums-x))).mean()
 
 def simCLR_criterion_torch(batch1, batch2, temp=0.1):
     batch_size = batch1.size(0)
@@ -32,7 +31,7 @@ def simCLR_criterion_torch(batch1, batch2, temp=0.1):
     x = torch.exp(x / temp)
     sums = x.sum(dim=0)
     x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
-    return -torch.log((x / (sums-x)) + EPSILON).mean()
+    return -torch.log((x / (sums-x))).mean()
     
 def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE, gradient_clip=None):
     model.train()
@@ -101,7 +100,7 @@ def simCLR_train(
     model = model.to(device)
     projector = projector.to(device)
     if optimizer is None:
-        optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.001, weight_decay=0.1)
+        optimizer = optim.AdamW(list(model.parameters()) + list(projector.parameters()), lr=0.0001, weight_decay=0.1)
     if scheduler is None:
         scheduler = optim.lr_scheduler.SequentialLR(optimizer, schedulers=[
             optim.lr_scheduler.LinearLR(optimizer, start_factor=0.33, end_factor=1.0, total_iters=5),
@@ -128,60 +127,70 @@ def simCLR_train(
     return model, projector
 
 if __name__ == '__main__':
-    # import logging, torchvision, os, sys, datetime
-    # 
-    # model = models.mobilenet_v3_small()
-    # 
-    # train_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    import logging, torchvision, os, sys, datetime
+
+    model = models.resnet50()
+    batch_size = 128
+
+    # model = models.mobilenet_v3_large()
+    # batch_size = 512
+
+    # train_set = torchvision.datasets.ImageFolder(root="/home/carl/datasets/imagenet/ILSVRC/Data/CLS-LOC/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]))
     # train_loader = torch.utils.data.DataLoader(train_set, batch_size=512, shuffle=True)
     #
-    # val_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    # val_set = torchvision.datasets.ImageFolder(root="/home/carl/datasets/imagenet/ILSVRC/Data/CLS-LOC/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.485, 0.456, 0.406], [0.229, 0.224, 0.225])]))
     # val_loader = torch.utils.data.DataLoader(val_set, batch_size=512, shuffle=True)
-    #
-    # logging_file = 'train.log'
-    # root_logger = logging.getLogger()
-    # loging_formatter = logging.Formatter('')
-    # root_logger.setLevel(logging.DEBUG)
-    # file_handler = logging.FileHandler(logging_file, mode='w')
-    # file_handler.setFormatter(loging_formatter)
-    # file_handler.setLevel(logging.INFO)
-    # console_handler = logging.StreamHandler(sys.stdout)
-    # console_handler.setFormatter(loging_formatter)
-    # console_handler.setLevel(logging.DEBUG)
-    # root_logger.addHandler(file_handler)
-    # root_logger.addHandler(console_handler)
-    #
-    # save_dir = os.path.join('weights', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
-    # os.makedirs(save_dir, exist_ok=True)
-    #
-    # best_val_loss = float('inf')
-    # def checkpoint_hook(epoch, train_loss, val_loss, hook_model, hook_projector, hook_optimizer, hook_scheduler):
-    #     global best_val_loss
-    #
-    #     with open(logging_file, 'r') as f:
-    #         log_string = f.read()
-    #
-    #     save_dict = {
-    #         'model': hook_model.state_dict(), 
-    #         'projector': hook_projector.state_dict(), 
-    #         'optimizer': hook_optimizer.state_dict(), 
-    #         'scheduler': hook_scheduler.state_dict(),
-    #         'epoch': epoch,
-    #         'log': log_string 
-    #     }
-    #     torch.save(save_dict, os.path.join(save_dir, f'latest.pth'))
-    #     if val_loss < best_val_loss:
-    #         best_val_loss = val_loss
-    #         torch.save(save_dict, os.path.join(save_dir, 'best.pth'))
-    #     if (epoch+1) % 10 == 0:
-    #         torch.save(save_dict, os.path.join(save_dir, f'{epoch}.pth'))
-    # 
-    # simCLR_train(train_loader, val_loader=val_loader, model=model, logger=root_logger, epoch_complete_hook=checkpoint_hook)
 
-    b1 = torch.randn(512, 128)
-    b2 = torch.randn(512, 128)
+    train_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/train", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    train_loader = torch.utils.data.DataLoader(train_set, batch_size=batch_size, shuffle=True)
 
-    print(simCLR_criterion(b1, b2))
-    print(simCLR_criterion_torch(b1, b2))
+    val_set = torchvision.datasets.ImageFolder(root="~/datasets/yugioh/val", transform=transforms.Compose([transforms.CenterCrop(224), transforms.ToTensor(), transforms.Normalize([0.4862, 0.4405, 0.4220], [0.2606, 0.2404, 0.2379])]))
+    val_loader = torch.utils.data.DataLoader(val_set, batch_size=batch_size, shuffle=True)
+
+    logging_file = 'train.log'
+    root_logger = logging.getLogger()
+    loging_formatter = logging.Formatter('')
+    root_logger.setLevel(logging.DEBUG)
+    file_handler = logging.FileHandler(logging_file, mode='w')
+    file_handler.setFormatter(loging_formatter)
+    file_handler.setLevel(logging.INFO)
+    console_handler = logging.StreamHandler(sys.stdout)
+    console_handler.setFormatter(loging_formatter)
+    console_handler.setLevel(logging.DEBUG)
+    root_logger.addHandler(file_handler)
+    root_logger.addHandler(console_handler)
+
+    save_dir = os.path.join('weights', datetime.datetime.now().strftime('%Y-%m-%d_%H-%M-%S'))
+    os.makedirs(save_dir, exist_ok=True)
+
+    best_val_loss = float('inf')
+    def checkpoint_hook(epoch, train_loss, val_loss, hook_model, hook_projector, hook_optimizer, hook_scheduler):
+        global best_val_loss
+
+        with open(logging_file, 'r') as f:
+            log_string = f.read()
+
+        save_dict = {
+            'model': hook_model.state_dict(), 
+            'projector': hook_projector.state_dict(), 
+            'optimizer': hook_optimizer.state_dict(), 
+            'scheduler': hook_scheduler.state_dict(),
+            'epoch': epoch,
+            'log': log_string 
+        }
+        torch.save(save_dict, os.path.join(save_dir, f'latest.pth'))
+        if val_loss < best_val_loss:
+            best_val_loss = val_loss
+            torch.save(save_dict, os.path.join(save_dir, 'best.pth'))
+        if (epoch+1) % 10 == 0:
+            torch.save(save_dict, os.path.join(save_dir, f'{epoch}.pth'))
+
+    simCLR_train(train_loader, val_loader=val_loader, model=model, logger=root_logger, epoch_complete_hook=checkpoint_hook)
+
+    # b1 = torch.randn(512, 128)
+    # b2 = torch.randn(512, 128)
+    #
+    # print(simCLR_criterion(b1, b2))
+    # print(simCLR_criterion_torch(b1, b2))
 
 
