@@ -12,12 +12,15 @@ def load_checkpoint(checkpoint_path, model, projector, optimizer, scheduler):
 
 
 if __name__ == '__main__':
-    import sys
+    import sys, os
     import torch.nn as nn
     import torch.optim as optim
     from torchvision import models, transforms
     from PIL import Image
-    from train import simCLR_criterion, get_color_distortion
+
+    sys.path.append(os.path.join(os.path.dirname(__file__), '..'))
+
+    from ssl_framework.simclr import get_color_distortion
 
     weights_path = sys.argv[1]
     image_path = sys.argv[2]

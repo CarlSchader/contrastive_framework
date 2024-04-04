@@ -13,7 +13,7 @@ def get_color_distortion(s=1.0):
     color_distort = transforms.Compose([rnd_color_jitter, rnd_gray])
     return color_distort
 
-def simCLR_criterion(batch1, batch2, temp=0.1):
+def NT_Xent(batch1, batch2, temp=0.1):
     batch_size = batch1.size(0)
     x = torch.cat([batch1, batch2], dim=0)
     x = x / x.norm(dim=1)[:, None]
@@ -23,17 +23,7 @@ def simCLR_criterion(batch1, batch2, temp=0.1):
     x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
     return -torch.log((x / (sums-x))).mean()
 
-def simCLR_criterion_torch(batch1, batch2, temp=0.1):
-    batch_size = batch1.size(0)
-    x = torch.cat([batch1, batch2], dim=0)
-    x = x / x.norm(dim=1)[:, None]
-    x = torch.mm(x, x.t())
-    x = torch.exp(x / temp)
-    sums = x.sum(dim=0)
-    x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
-    return -torch.log((x / (sums-x))).mean()
-    
-def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE, gradient_clip=None):
+def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=NT_Xent, logger=None, device=DETECTED_DEVICE, gradient_clip=None):
     model.train()
     total_loss = 0
     batches = len(train_loader)
@@ -59,7 +49,7 @@ def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, s
     mean_loss = total_loss / batches
     return mean_loss
 
-def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=simCLR_criterion, logger=None, device=DETECTED_DEVICE):
+def simCLR_validate_iteration(model, val_loader, projector, augment, criterion=NT_Xent, logger=None, device=DETECTED_DEVICE):
     model.eval()
     projector.eval()
     total_loss = 0
@@ -89,7 +79,7 @@ def simCLR_train(
         get_color_distortion(),
         transforms.GaussianBlur(kernel_size=3),
     ]),
-    criterion=simCLR_criterion, 
+    criterion=NT_Xent, 
     num_epochs=100,
     logger=None, 
     device=DETECTED_DEVICE,
