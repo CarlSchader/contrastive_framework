@@ -14,14 +14,22 @@ def get_color_distortion(s=1.0):
     return color_distort
 
 def NT_Xent(batch1, batch2, temp=0.1):
-    batch_size = batch1.size(0)
-    x = torch.cat([batch1, batch2], dim=0)
-    x = x / x.norm(dim=1)[:, None]
-    x = torch.mm(x, x.t())
-    x = torch.exp(x / temp)
-    sums = x.sum(dim=0)
-    x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
-    return -torch.log((x / (sums-x))).mean()
+    # batch_size = batch1.size(0)
+    # x = torch.cat([batch1, batch2], dim=0)
+    # x = x / x.norm(dim=1)[:, None]
+    # x = torch.mm(x, x.t())
+    # x = torch.exp(x / temp)
+    # sums = x.sum(dim=0)
+    # x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
+    # return -torch.log((x / (sums-x))).mean()
+    
+    batch1 = batch1 / torch.norm(batch1, dim=1, keepdim=True)
+    batch2 = batch2 / torch.norm(batch2, dim=1, keepdim=True)
+    sim_matrix = torch.mm(batch1, batch2.t()) / temp
+    sim_matrix = sim_matrix - torch.max(sim_matrix, dim=1, keepdim=True)[0]
+    sim_matrix = torch.exp(sim_matrix)
+    sim_matrix = sim_matrix / torch.sum(sim_matrix, dim=1, keepdim=True)
+    return -torch.mean(torch.log(torch.diag(sim_matrix)))
 
 def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=NT_Xent, logger=None, device=DETECTED_DEVICE, gradient_clip=None):
     model.train()
