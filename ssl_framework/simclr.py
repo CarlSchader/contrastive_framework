@@ -1,5 +1,6 @@
 import torch
 import torch.nn as nn
+import torch.nn.functional as F
 import torchvision.models as models
 import torchvision.transforms as transforms
 import torch.optim as optim
@@ -16,13 +17,29 @@ def get_color_distortion(s=1.0):
     return color_distort
 
 def NT_Xent(batch1, batch2, temp=0.1):
-    batch_size = batch1.size(0)
+    # batch_size = batch1.size(0)
+    # x = torch.cat([batch1, batch2], dim=0)
+    # x = x / x.norm(dim=1)[:, None]
+    # x = torch.mm(x, x.t())
+    # x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
+    # x = x / temp
+    # targets = torch.cat([torch.arange(batch_size), torch.arange(batch_size)])
+    # print(targets.dtype, targets.shape)
+    # print(x.dtype, x.shape)
+    # return cross_entropy(x, targets)
+
     x = torch.cat([batch1, batch2], dim=0)
-    x = x / x.norm(dim=1)[:, None]
-    x = torch.mm(x, x.t())
-    x = torch.cat((torch.diagonal(x, offset=batch_size, dim1=1, dim2=0), torch.diagonal(x, offset=batch_size, dim1=0, dim2=1)))
-    x = x / temp
-    return cross_entropy(x, torch.arange(batch_size).to(x.device))
+    # Calculate cosine similarity
+    cos_sim = F.cosine_similarity(x[:,None,:], x[None,:,:], dim=-1)
+    # Mask out cosine similarity to itself
+    self_mask = torch.eye(cos_sim.shape[0], dtype=torch.bool, device=cos_sim.device)
+    cos_sim.masked_fill_(self_mask, -9e15)
+    # Find positive example -> batch_size//2 away from the original example
+    pos_mask = self_mask.roll(shifts=cos_sim.shape[0]//2, dims=0)
+    # InfoNCE loss
+    cos_sim = cos_sim / temp
+    nll = -cos_sim[pos_mask] + torch.logsumexp(cos_sim, dim=-1)
+    return nll.mean()
     
     
 def simCLR_train_iteration(model, train_loader, projector, augment, optimizer, scheduler, criterion=NT_Xent, logger=None, device=DETECTED_DEVICE, gradient_clip=None):

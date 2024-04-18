@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ssl_framework"
-version = "0.2.2"
+version = "0.2.4"
 authors = [
   { name="Carl Schader", email="carlschader@gmail.com" },
 ]
